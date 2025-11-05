@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 import json
 import os
 from collections import Counter, defaultdict
-import requests
 
 # helper function for report (to be implented)
 def _save_analytics_snapshot():
@@ -13,7 +12,7 @@ def _save_analytics_snapshot():
     with open("analytics/stats.json", "w", encoding="utf-8") as f:
         json.dump(analytics_data, f, indent=2)
 
-#report stats
+# report stats
 visited_urls = set()
 word_frequency = Counter()
 subdomain_counter = defaultdict(int)
@@ -23,7 +22,17 @@ longest_page = {"url": None, "word_count": 0}
 ALLOWED_DOMAINS = {"ics.uci.edu","cs.uci.edu","informatics.uci.edu","stat.uci.edu",}
 
 # stop words to ignore (gathered from ranks.nl)
-STOP_WORDS = STOP_WORDS = set(requests.get("https://www.ranks.nl/stopwords").text.splitlines())
+STOP_WORDS = {"a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are", "aren't", "as", "at", "be", "because", "been",
+    "before", "being", "below", "between", "both", "but", "by", "can't","cannot", "could", "couldn't", "did", "didn't", "do", "does", "doesn't",
+    "doing", "don't", "down", "during", "each", "few", "for", "from", "further", "had", "hadn't", "has", "hasn't", "have", "haven't", "having",
+    "he", "he'd", "he'll", "he's", "her", "here", "here's", "hers", "herself", "him", "himself", "his", "how", "how's", "i", "i'd", "i'll",
+    "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself", "let's", "me", "more", "most", "mustn't", "my", "myself", "no",
+    "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "shan't",
+    "she", "she'd", "she'll", "she's", "should", "shouldn't", "so", "some", "such", "than", "that", "that's", "the", "their", "theirs", "them",
+    "themselves", "then", "there", "there's", "these", "they", "they'd", "they'll", "they're", "they've", "this", "those", "through", "to", "too",
+    "under", "until", "up", "very", "was", "wasn't", "we", "we'd", "we'll", "we're", "we've", "were", "weren't", "what", "what's", "when", "when's",
+    "where", "where's", "which", "while", "who", "who's", "whom", "why", "why's", "with", "won't", "would", "wouldn't", "you", "you'd", "you'll",
+    "you're", "you've", "your", "yours", "yourself", "yourselves"}
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
@@ -40,6 +49,14 @@ def extract_next_links(url, resp):
     content_type = resp.raw_response.headers.get("Content-Type", "")
     if "text/html" not in content_type:
         return extracted_urls
+    
+    # don't process large files
+    try:
+        clen = int(resp.raw_response.headers.get("Content-Length", 0))
+        if clen > 8_000_000:
+            return extracted_urls
+    except Exception:
+        pass
 
     # HTML parser
     try:
@@ -47,8 +64,12 @@ def extract_next_links(url, resp):
     except Exception:
         return extracted_urls
 
-    # get text 
+    # get text characters
     text = soup.get_text(" ", strip=True)
+
+    # avoiding pages with less than 250 characters (no info)
+    if len(text) < 250:
+        return extracted_urls
 
     # normalize and uniform to lower case and alpnum
     tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9]+", text)]
