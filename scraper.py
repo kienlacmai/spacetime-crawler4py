@@ -13,6 +13,7 @@ def _save_analytics_snapshot():
     with open("analytics/stats.json", "w", encoding="utf-8") as f:
         json.dump(analytics_data, f, indent=2)
 
+#report stats
 visited_urls = set()
 word_frequency = Counter()
 subdomain_counter = defaultdict(int)
@@ -31,23 +32,34 @@ def scraper(url, resp):
 def extract_next_links(url, resp):
     extracted_urls = []
 
+    # check for valid response status
     if resp.status != 200 or resp.raw_response is None:
         return extracted_urls
 
+    # only process valid HTML files 
     content_type = resp.raw_response.headers.get("Content-Type", "")
     if "text/html" not in content_type:
         return extracted_urls
 
+    # HTML parser
     try:
         soup = BeautifulSoup(resp.raw_response.content, "lxml")
     except Exception:
         return extracted_urls
 
+    # get text 
     text = soup.get_text(" ", strip=True)
+
+    # normalize and uniform to lower case and alpnum
     tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9]+", text)]
+
+    # filter out stop words
     tokens = [t for t in tokens if t not in STOP_WORDS]
 
+    # remove fragments 
     defragmented_url, _ = urldefrag(resp.url or url)
+
+    # add URL not visited
     if defragmented_url not in visited_urls:
         visited_urls.add(defragmented_url)
 
@@ -84,10 +96,12 @@ def is_valid(url):
         if parsed.scheme not in set(["http", "https"]):
             return False
 
+        # only allow valid subdomains
         hostname = parsed.hostname or ""
         if not any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_DOMAINS):
             return False
 
+        # avoiding traps
         query = parsed.query or ""
         path = parsed.path or ""
         trap_patterns = [
@@ -95,12 +109,15 @@ def is_valid(url):
             re.compile(r"(sessionid|phpsessid|utm_)", re.I),
             re.compile(r"(page=\d{3,}|offset=\d{3,})", re.I),
         ]
+
+        # rejecting URLs with long queries / a lot of parameters
         if len(query) > 120 or query.count("&") > 6:
             return False
         for pattern in trap_patterns:
             if pattern.search(path + query):
                 return False
 
+        # skip non-HTML files
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
