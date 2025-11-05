@@ -1,21 +1,79 @@
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin, urldefrag
+from bs4 import BeautifulSoup
+import json
+import os
+from collections import Counter, defaultdict
+import requests
+
+# helper function for report (to be implented)
+def _save_analytics_snapshot():
+    analytics_data = {"unique_urls": list(visited_urls),"word_freq": dict(word_frequency),"subdomains": dict(subdomain_counter),"longest_page": longest_page,}
+    os.makedirs("analytics", exist_ok=True)
+    with open("analytics/stats.json", "w", encoding="utf-8") as f:
+        json.dump(analytics_data, f, indent=2)
+
+visited_urls = set()
+word_frequency = Counter()
+subdomain_counter = defaultdict(int)
+longest_page = {"url": None, "word_count": 0}
+
+# restricted domains to visit
+ALLOWED_DOMAINS = {"ics.uci.edu","cs.uci.edu","informatics.uci.edu","stat.uci.edu",}
+
+# stop words to ignore (gathered from ranks.nl)
+STOP_WORDS = STOP_WORDS = set(requests.get("https://www.ranks.nl/stopwords").text.splitlines())
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
     return [link for link in links if is_valid(link)]
 
 def extract_next_links(url, resp):
-    # Implementation required.
-    # url: the URL that was used to get the page
-    # resp.url: the actual url of the page
-    # resp.status: the status code returned by the server. 200 is OK, you got the page. Other numbers mean that there was some kind of problem.
-    # resp.error: when status is not 200, you can check the error here, if needed.
-    # resp.raw_response: this is where the page actually is. More specifically, the raw_response has two parts:
-    #         resp.raw_response.url: the url, again
-    #         resp.raw_response.content: the content of the page!
-    # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    return list()
+    extracted_urls = []
+
+    if resp.status != 200 or resp.raw_response is None:
+        return extracted_urls
+
+    content_type = resp.raw_response.headers.get("Content-Type", "")
+    if "text/html" not in content_type:
+        return extracted_urls
+
+    try:
+        soup = BeautifulSoup(resp.raw_response.content, "lxml")
+    except Exception:
+        return extracted_urls
+
+    text = soup.get_text(" ", strip=True)
+    tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9]+", text)]
+    tokens = [t for t in tokens if t not in STOP_WORDS]
+
+    defragmented_url, _ = urldefrag(resp.url or url)
+    if defragmented_url not in visited_urls:
+        visited_urls.add(defragmented_url)
+
+        word_frequency.update(tokens)
+
+        word_count = len(tokens)
+        if word_count > longest_page["word_count"]:
+            longest_page["url"] = defragmented_url
+            longest_page["word_count"] = word_count
+
+        hostname = urlparse(defragmented_url).hostname or ""
+        if hostname.endswith(".uci.edu") or hostname == "uci.edu":
+            subdomain_counter[hostname] += 1
+
+        if len(visited_urls) % 25 == 0:
+            _save_analytics_snapshot()
+
+    # extract and normalize links
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"].strip()
+        if not href or href.startswith(("mailto:", "javascript:")):
+            continue
+        normalized_link, _ = urldefrag(urljoin(defragmented_url, href))
+        extracted_urls.append(normalized_link)
+
+    return extracted_urls
 
 def is_valid(url):
     # Decide whether to crawl this url or not. 
@@ -25,6 +83,24 @@ def is_valid(url):
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
             return False
+
+        hostname = parsed.hostname or ""
+        if not any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_DOMAINS):
+            return False
+
+        query = parsed.query or ""
+        path = parsed.path or ""
+        trap_patterns = [
+            re.compile(r"(calendar|ical|event)", re.I),
+            re.compile(r"(sessionid|phpsessid|utm_)", re.I),
+            re.compile(r"(page=\d{3,}|offset=\d{3,})", re.I),
+        ]
+        if len(query) > 120 or query.count("&") > 6:
+            return False
+        for pattern in trap_patterns:
+            if pattern.search(path + query):
+                return False
+
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
@@ -33,8 +109,9 @@ def is_valid(url):
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
-            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", (parsed.path or "").lower()
+        )
 
     except TypeError:
-        print ("TypeError for ", parsed)
+        print("TypeError for ", parsed)
         raise
