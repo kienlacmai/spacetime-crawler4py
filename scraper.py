@@ -119,12 +119,22 @@ def is_valid(url):
 
         # only allow valid subdomains
         hostname = parsed.hostname or ""
+        path = parsed.path or ""
+        query = parsed.query or ""
+
         if not any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_DOMAINS):
             return False
 
-        # avoiding traps
-        query = parsed.query or ""
-        path = parsed.path or ""
+         if hostname in {"wiki.ics.uci.edu", "swiki.ics.uci.edu"}:
+            # Media manager / file lists / exports
+            if "do=media" in query:
+                return False
+            if "do=export" in query:
+                return False
+            # Image/file browsing with tabs/namespaces → almost always low info
+            if "image=" in query and ("tab_files=" in query or "ns=" in query):
+                return False
+
         trap_patterns = [
             re.compile(r"(calendar|ical|event)", re.I),
             re.compile(r"(sessionid|phpsessid|utm_)", re.I),
