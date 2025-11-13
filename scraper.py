@@ -124,31 +124,34 @@ def is_valid(url):
 
         if not any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_DOMAINS):
             return False
-
-         if hostname in {"wiki.ics.uci.edu", "swiki.ics.uci.edu"}:
-            # Media manager / file lists / exports
-            if "do=media" in query:
+     
+        if hostname in {"wiki.ics.uci.edu", "swiki.ics.uci.edu"} and "doku.php" in path:
+            if "do=media" in query or "do=export" in query:
                 return False
-            if "do=export" in query:
-                return False
-            # Image/file browsing with tabs/namespaces → almost always low info
             if "image=" in query and ("tab_files=" in query or "ns=" in query):
                 return False
 
-        trap_patterns = [
-            re.compile(r"(calendar|ical|event)", re.I),
-            re.compile(r"(sessionid|phpsessid|utm_)", re.I),
-            re.compile(r"(page=\d{3,}|offset=\d{3,})", re.I),
-        ]
+        low_path_query = (path + "?" + query) if query else path
+        trap_substrings = ("/calendar", "/events", "/event", "/archives", "/archive", "/feed", "format=feed", "view=print", "print=1", "preview=", "share=", "replytocom=", "utm", "sessionid", "phpsessid")
 
-        # rejecting URLs with long queries / a lot of parameters
+        if any(s in low_path_query.lower() for s in trap_substrings):
+            return False
+
+         #trap checkers
+        if "calendar" in parsed.netloc:
+            return False
+
+        date_pattern = re.compile(r'\d{4}[-/]\d{2}[-/]\d{2}')
+        if date_pattern.search(parsed.path):
+            return False
+
+        if re.match(r'(page|date|year|month)=\d{4,}', parsed.query):
+            return False
+
         if len(query) > 120 or query.count("&") > 6:
             return False
-        for pattern in trap_patterns:
-            if pattern.search(path + query):
-                return False
 
-        # skip non-HTML files
+               # skip non-HTML files
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
@@ -158,7 +161,8 @@ def is_valid(url):
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", (parsed.path or "").lower()
-        )
+        )   
+
 
     except TypeError:
         print("TypeError for ", parsed)
